@@ -128,6 +128,7 @@ Nothing — this is the first step.
 
 Use exactly these values:
 
+
 - Food
 - Transport
 - Bills
