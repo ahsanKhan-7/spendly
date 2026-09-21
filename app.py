@@ -1,4 +1,5 @@
 import os
+from datetime import date, datetime
 
 from flask import Flask, redirect, render_template, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -113,7 +114,77 @@ def logout():
 
 @app.route("/profile")
 def profile():
-    return "Profile page — coming in Step 4"
+    user_id = session.get("user_id")
+    if not user_id:
+        return redirect(url_for("login"))
+
+    month_start = date.today().replace(day=1).isoformat()
+
+    conn = get_db()
+    try:
+        user = conn.execute(
+            "SELECT name, email, created_at FROM users WHERE id = ?", (user_id,)
+        ).fetchone()
+        if not user:
+            session.clear()
+            return redirect(url_for("login"))
+
+        totals = conn.execute(
+            "SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total "
+            "FROM expenses WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        month_total = conn.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM expenses "
+            "WHERE user_id = ? AND date >= ?",
+            (user_id, month_start),
+        ).fetchone()[0]
+        category_rows = conn.execute(
+            "SELECT category, SUM(amount) AS total FROM expenses "
+            "WHERE user_id = ? GROUP BY category ORDER BY total DESC",
+            (user_id,),
+        ).fetchall()
+        recent = conn.execute(
+            "SELECT date, category, description, amount FROM expenses "
+            "WHERE user_id = ? ORDER BY date DESC, id DESC LIMIT 8",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    grand_total = totals["total"]
+    categories = [
+        {
+            "name": row["category"],
+            "total": row["total"],
+            "pct": round(row["total"] / grand_total * 100) if grand_total else 0,
+        }
+        for row in category_rows
+    ]
+
+    try:
+        member_since = datetime.strptime(
+            user["created_at"], "%Y-%m-%d %H:%M:%S"
+        ).strftime("%B %Y")
+    except (TypeError, ValueError):
+        member_since = None
+
+    stats = {
+        "total": grand_total,
+        "month": month_total,
+        "count": totals["n"],
+        "top_category": categories[0]["name"] if categories else "—",
+    }
+
+    return render_template(
+        "profile.html",
+        user=user,
+        initial=user["name"][:1].upper(),
+        member_since=member_since,
+        stats=stats,
+        categories=categories,
+        recent=recent,
+    )
 
 
 @app.route("/expenses/add")
